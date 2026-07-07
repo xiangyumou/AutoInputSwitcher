@@ -9,6 +9,7 @@ BUILD_NUMBER="${BUILD_NUMBER:-1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/.build/dist"
 ZIP_PATH="$DIST_DIR/${APP_NAME}-macOS.zip"
+DMG_PATH="$DIST_DIR/${APP_NAME}-macOS.dmg"
 
 cd "$ROOT_DIR"
 
@@ -23,4 +24,7 @@ xattr -cr "$ROOT_DIR/.build/${APP_NAME}.app" 2>/dev/null || true
     /usr/bin/zip -qry "$ZIP_PATH" "${APP_NAME}.app" -x "*.DS_Store"
 )
 
+"$ROOT_DIR/Scripts/create-dmg.sh"
+
 echo "Packaged $ZIP_PATH"
+echo "Packaged $DMG_PATH"

@@ -35,8 +35,11 @@ open .build/AutoInputSwitcher.app
 The release archive is written to:
 
 ```text
+.build/dist/AutoInputSwitcher-macOS.dmg
 .build/dist/AutoInputSwitcher-macOS.zip
 ```
+
+Use the `.dmg` for the normal macOS app image. Open it and drag `AutoInputSwitcher.app` into `Applications`. The `.zip` is kept as a plain backup archive.
 
 ## Usage
 
@@ -49,5 +52,5 @@ The app uses `LSUIElement`, so it does not show a Dock icon or menu bar item. Cl
 `.github/workflows/release.yml` runs on pushes to `main` and manual dispatches.
 
 - `checks`: runs `./Scripts/test.sh` and is non-blocking.
-- `build`: packages the macOS app and uploads the zip artifact.
-- `release`: creates a GitHub Release with `AutoInputSwitcher-macOS.zip`.
+- `build`: packages the macOS app and uploads the dmg and zip artifacts.
+- `release`: creates a GitHub Release with `AutoInputSwitcher-macOS.dmg` and `AutoInputSwitcher-macOS.zip`.

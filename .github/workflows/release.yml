@@ -53,7 +53,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AutoInputSwitcher-macOS
-          path: .build/dist/AutoInputSwitcher-macOS.zip
+          path: |
+            .build/dist/AutoInputSwitcher-macOS.dmg
+            .build/dist/AutoInputSwitcher-macOS.zip
           if-no-files-found: error
 
   release:
@@ -77,16 +79,17 @@ jobs:
           TITLE: AutoInputSwitcher build ${{ github.run_number }}
         run: |
           ZIP_PATH="$(find release-assets -type f -name 'AutoInputSwitcher-macOS.zip' | head -n 1)"
-          if [ -z "$ZIP_PATH" ]; then
-            echo "AutoInputSwitcher-macOS.zip was not downloaded" >&2
+          DMG_PATH="$(find release-assets -type f -name 'AutoInputSwitcher-macOS.dmg' | head -n 1)"
+          if [ -z "$DMG_PATH" ] || [ -z "$ZIP_PATH" ]; then
+            echo "Release assets were not downloaded" >&2
             exit 1
           fi
 
           gh release delete "$TAG_NAME" --repo "$GH_REPO" --cleanup-tag --yes || true
 
-          gh release create "$TAG_NAME" "$ZIP_PATH" \
+          gh release create "$TAG_NAME" "$DMG_PATH" "$ZIP_PATH" \
             --repo "$GH_REPO" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Automated macOS build from $GITHUB_SHA. The checks job is non-blocking; build and release depend only on the package step." \
+            --notes "Automated macOS build from $GITHUB_SHA. Download AutoInputSwitcher-macOS.dmg for the app image, or AutoInputSwitcher-macOS.zip as a plain archive. The checks job is non-blocking; build and release depend only on the package step." \
             --latest
