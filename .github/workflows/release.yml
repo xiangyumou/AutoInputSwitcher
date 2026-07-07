@@ -1,0 +1,88 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Non-blocking checks
+    runs-on: macos-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version || true
+
+      - name: Run core checks
+        run: ./Scripts/test.sh
+
+  build:
+    name: Build app
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version || true
+
+      - name: Package app
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./Scripts/package-release.sh
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoInputSwitcher-macOS
+          path: .build/dist/AutoInputSwitcher-macOS.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    runs-on: macos-latest
+    needs:
+      - build
+
+    steps:
+      - name: Download app artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: AutoInputSwitcher-macOS
+          path: release-assets
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: build-${{ github.run_number }}
+          TITLE: AutoInputSwitcher build ${{ github.run_number }}
+        run: |
+          ZIP_PATH="$(find release-assets -type f -name 'AutoInputSwitcher-macOS.zip' | head -n 1)"
+          if [ -z "$ZIP_PATH" ]; then
+            echo "AutoInputSwitcher-macOS.zip was not downloaded" >&2
+            exit 1
+          fi
+
+          gh release create "$TAG_NAME" "$ZIP_PATH" \
+            --target "$GITHUB_SHA" \
+            --title "$TITLE" \
+            --notes "Automated macOS build from $GITHUB_SHA. The checks job is non-blocking; build and release depend only on the package step." \
+            --latest
