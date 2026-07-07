@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   checks:
@@ -58,7 +58,7 @@ jobs:
 
   release:
     name: Publish release
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     needs:
       - build
 
