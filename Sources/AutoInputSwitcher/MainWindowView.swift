@@ -4,6 +4,7 @@ import SwiftUI
 
 struct MainWindowView: View {
     @ObservedObject var runtime: AppRuntime
+    @State private var loadedIcons: [String: NSImage] = [:]
     let onQuit: () -> Void
 
     var body: some View {
@@ -48,6 +49,19 @@ struct MainWindowView: View {
             )
             .toggleStyle(.switch)
             .accessibilityLabel("开机自启")
+
+            Toggle(
+                "菜单栏",
+                isOn: Binding(
+                    get: { UserDefaults.standard.bool(forKey: "showMenuBarIcon") },
+                    set: {
+                        UserDefaults.standard.set($0, forKey: "showMenuBarIcon")
+                        runtime.updateMenuBarIconVisibility?($0)
+                    }
+                )
+            )
+            .toggleStyle(.switch)
+            .accessibilityLabel("显示菜单栏图标")
 
             Button {
                 runtime.reloadApplications()
@@ -115,7 +129,15 @@ struct MainWindowView: View {
 
     private var applicationsContent: some View {
         Group {
-            if runtime.filteredInstalledApplications.isEmpty {
+            if runtime.isScanning && runtime.installedApplications.isEmpty {
+                VStack(spacing: 12) {
+                    ProgressView("正在扫描已安装应用...")
+                    Text("首次加载可能需要几秒钟")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if runtime.filteredInstalledApplications.isEmpty {
                 ContentUnavailableView(
                     "没有匹配的应用",
                     systemImage: "magnifyingglass",
@@ -133,10 +155,19 @@ struct MainWindowView: View {
         Table(runtime.filteredInstalledApplications) {
             TableColumn("应用") { application in
                 HStack(spacing: 8) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: application.url.path))
-                        .resizable()
-                        .frame(width: 24, height: 24)
-                        .accessibilityHidden(true)
+                    if let icon = loadedIcons[application.bundleIdentifier] {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 24, height: 24)
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: "app.fill")
+                            .resizable()
+                            .frame(width: 24, height: 24)
+                            .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
+                            .onAppear { loadIcon(for: application) }
+                    }
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(application.name)
@@ -190,6 +221,13 @@ struct MainWindowView: View {
 
     private var statusColor: Color {
         runtime.statusMessage.contains("失败") ? .red : .secondary
+    }
+
+    private func loadIcon(for application: InstalledApplication) {
+        guard loadedIcons[application.bundleIdentifier] == nil else { return }
+        let icon = NSWorkspace.shared.icon(forFile: application.url.path)
+        icon.size = NSSize(width: 24, height: 24)
+        loadedIcons[application.bundleIdentifier] = icon
     }
 
     private func metric(title: String, value: String) -> some View {

@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-struct InstalledApplicationScanner {
+struct InstalledApplicationScanner: @unchecked Sendable {
     private let fileManager: FileManager
 
     init(fileManager: FileManager = .default) {

@@ -15,6 +15,7 @@ final class AppRuntime: ObservableObject {
     @Published var searchText: String
     @Published var applicationListScope: ApplicationListScope
     @Published var statusMessage: String
+    @Published var isScanning: Bool = false
 
     private let store: JSONRuleStore
     private let inputSourceManager: SystemInputSourceManager
@@ -37,7 +38,6 @@ final class AppRuntime: ObservableObject {
         self.ownBundleIdentifier = Bundle.main.bundleIdentifier
         let loadedInputSources = inputSourceManager.availableInputSources()
         let loadedCurrentInputSource = inputSourceManager.currentInputSource()
-        self.installedApplications = applicationScanner.scan()
         self.inputSources = loadedInputSources
         self.currentInputSource = loadedCurrentInputSource
         self.switchCount = switchCounter.count
@@ -53,6 +53,10 @@ final class AppRuntime: ObservableObject {
             self.statusMessage = "规则读取失败"
         }
 
+        self.installedApplications = []
+        self.isScanning = true
+
+        startAsyncApplicationScan()
         startMonitoring()
         updateCurrentApplication(from: NSWorkspace.shared.frontmostApplication)
     }
@@ -84,7 +88,9 @@ final class AppRuntime: ObservableObject {
     }
 
     func reloadApplications() {
-        installedApplications = applicationScanner.scan()
+        installedApplications = []
+        isScanning = true
+        startAsyncApplicationScan()
     }
 
     func selectedInputSourceID(for application: InstalledApplication) -> String {
@@ -190,6 +196,18 @@ final class AppRuntime: ObservableObject {
             statusMessage = "已保存"
         } catch {
             statusMessage = "规则保存失败"
+        }
+    }
+
+    private func startAsyncApplicationScan() {
+        Task {
+            let applications = await Task.detached(priority: .userInitiated) {
+                self.applicationScanner.scan()
+            }.value
+            await MainActor.run {
+                self.installedApplications = applications
+                self.isScanning = false
+            }
         }
     }
 
