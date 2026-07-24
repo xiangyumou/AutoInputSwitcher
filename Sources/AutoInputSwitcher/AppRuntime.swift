@@ -83,6 +83,7 @@ final class AppRuntime: ObservableObject {
     }
 
     func reloadInputSources() {
+        inputSourceManager.invalidateCache()
         inputSources = inputSourceManager.availableInputSources()
         currentInputSource = inputSourceManager.currentInputSource()
     }
