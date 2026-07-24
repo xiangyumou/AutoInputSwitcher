@@ -87,8 +87,7 @@ struct InstalledApplicationScanner {
         return InstalledApplication(
             name: name,
             bundleIdentifier: bundleIdentifier,
-            url: url,
-            icon: NSWorkspace.shared.icon(forFile: url.path)
+            url: url
         )
     }
 }

@@ -2,7 +2,23 @@ import Carbon
 import Foundation
 
 final class SystemInputSourceManager {
+    private var cachedInputSources: [InputSource]? = nil
+
     func availableInputSources() -> [InputSource] {
+        if let cached = cachedInputSources {
+            return cached
+        }
+
+        let sources = computeAvailableInputSources()
+        cachedInputSources = sources
+        return sources
+    }
+
+    func invalidateCache() {
+        cachedInputSources = nil
+    }
+
+    private func computeAvailableInputSources() -> [InputSource] {
         let filters: [String: Any] = [
             kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as String,
             kTISPropertyInputSourceIsSelectCapable as String: true

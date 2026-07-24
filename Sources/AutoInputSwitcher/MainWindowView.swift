@@ -133,7 +133,7 @@ struct MainWindowView: View {
         Table(runtime.filteredInstalledApplications) {
             TableColumn("应用") { application in
                 HStack(spacing: 8) {
-                    Image(nsImage: application.icon)
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: application.url.path))
                         .resizable()
                         .frame(width: 24, height: 24)
                         .accessibilityHidden(true)

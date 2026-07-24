@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 struct InstalledApplication: Identifiable, Equatable {
@@ -7,5 +6,4 @@ struct InstalledApplication: Identifiable, Equatable {
     let name: String
     let bundleIdentifier: String
     let url: URL
-    let icon: NSImage
 }
