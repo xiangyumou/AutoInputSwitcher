@@ -1,13 +1,17 @@
 import AppKit
+import AutoInputSwitcherCore
 import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var runtime: AppRuntime?
     private var window: NSWindow?
+    private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+
+        UserDefaults.standard.register(defaults: ["showMenuBarIcon": true])
 
         if activateExistingInstanceIfNeeded() {
             NSApp.terminate(nil)
@@ -22,7 +26,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
 
         runtime = AppRuntime()
-        showWindow()
+
+        runtime?.updateMenuBarIconVisibility = { [weak self] show in
+            self?.updateMenuBarIconVisibility(show)
+        }
+
+        let rulesURL = JSONRuleStore.applicationSupportStore().url
+        let isFirstLaunch = !FileManager.default.fileExists(atPath: rulesURL.path)
+        if isFirstLaunch { showWindow() }
+
+        setupMenuBar()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -98,6 +111,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func showWindowFromNotification() {
         showWindow()
+    }
+
+    private func setupMenuBar() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "AutoInputSwitcher")
+        item.button?.action = #selector(toggleWindow)
+        item.button?.target = self
+
+        let menu = NSMenu()
+        menu.addItem(withTitle: "显示窗口", action: #selector(showWindowFromMenu), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "关于 AutoInputSwitcher", action: #selector(showAboutPanel), keyEquivalent: "")
+        menu.addItem(withTitle: "退出", action: #selector(terminateApp), keyEquivalent: "q")
+        item.menu = menu
+
+        item.isVisible = UserDefaults.standard.bool(forKey: "showMenuBarIcon")
+        statusItem = item
+    }
+
+    @objc private func toggleWindow() {
+        guard let window else {
+            showWindow()
+            return
+        }
+
+        if window.isVisible && window.isKeyWindow {
+            window.orderOut(nil)
+        } else {
+            showWindow()
+        }
+    }
+
+    @objc private func showWindowFromMenu() {
+        showWindow()
+    }
+
+    @objc private func showAboutPanel() {
+        NSApp.orderFrontStandardAboutPanel(nil)
+    }
+
+    @objc private func terminateApp() {
+        NSApp.terminate(nil)
+    }
+
+    func updateMenuBarIconVisibility(_ show: Bool) {
+        UserDefaults.standard.set(show, forKey: "showMenuBarIcon")
+        statusItem?.isVisible = show
     }
 }
 

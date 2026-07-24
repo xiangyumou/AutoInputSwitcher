@@ -22,6 +22,7 @@ final class AppRuntime: ObservableObject {
     private let switchCounter: SwitchCounter
     private let ownBundleIdentifier: String?
     private var activationObserver: NSObjectProtocol?
+    var updateMenuBarIconVisibility: ((Bool) -> Void)?
 
     init(
         store: JSONRuleStore = .applicationSupportStore(),
