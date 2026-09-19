@@ -1,56 +1,186 @@
 # AutoInputSwitcher
 
-AutoInputSwitcher is a small native macOS app that switches the keyboard input source based on the foreground application.
+AutoInputSwitcher 是一个原生 macOS 小工具：根据当前前台应用自动切换键盘输入法。
 
-It is intentionally simple:
+它的行为刻意保持简单：
 
-- Lists installed macOS apps.
-- Lets each app stay on `-` for no automatic switch.
-- Saves per-app input source rules locally.
-- Runs in the background after closing the window.
-- Does not show a Dock icon or menu bar item.
-- Can launch at login.
-- Counts successful automatic switches.
+- 扫描已安装的应用，为每个应用保存一条输入法规则。
+- 规则的输入法选择为 `-` 时，表示该应用不做自动切换。
+- 规则只保存在本机（`~/Library/Application Support/AutoInputSwitcher/rules.json`）。
+- 关闭窗口后继续在后台运行；可从 Finder、Spotlight、Launchpad 或菜单栏图标重新打开。
+- 可选择显示菜单栏图标；不显示 Dock 图标（`LSUIElement`）。
+- 可设置为登录时启动。
+- 统计“实际发生切换”的次数。
+- 内置 Sparkle 自动更新，每小时检查一次新版本。
 
-## Requirements
+## 系统要求
 
-- macOS 14 or later
-- Swift 6 toolchain
-- Command Line Tools or Xcode
+- macOS 14 或更高版本
+- 开发需要 Swift 6 工具链（Command Line Tools 或 Xcode）
 
-## Run Locally
+发布包为 arm64 + x86_64 通用二进制。
 
-```bash
-./Scripts/test.sh
-./Scripts/build-app.sh
-open .build/AutoInputSwitcher.app
-```
+## 使用
 
-## Package a Release Build
+打开主窗口后，每个已安装的应用在表格里占一行：
 
-```bash
-./Scripts/package-release.sh
-```
+- 选择 `-`：该应用不做自动切换。
+- 选择一个输入法：该应用成为前台时切换到该输入法。
+- 规则里保存的输入法在当前系统上不可用时，选择器仍会保留一项“不可用：{已保存名称}”，规则不会被自动删除或改写。请手动改选一个可用输入法。
+- 规则指向的应用已经卸载时，该行会标记“未找到应用”，仍可修改或删除规则。
+- “全部 / 已配置 / 未配置”用于筛选列表，“未配置”只显示扫描到且还没有规则的应用。
 
-The release archive is written to:
+窗口标题栏附近提供“检查更新…”，用于手动检查更新；菜单栏菜单里也有同一项。
+
+规则文件读取失败时，应用会暂停规则编辑并在界面上持续提示，原文件不会被动过；可以点“重新读取”，或用“在 Finder 中显示规则文件”手动处理。保存失败时修改不会生效，界面保留修改前的状态。
+
+## 安装
+
+从 [Releases](https://github.com/xiangyumou/AutoInputSwitcher/releases) 下载 `AutoInputSwitcher-macOS.dmg`，打开后把 `AutoInputSwitcher.app` 拖进“应用程序”。
+
+首次打开时系统会拦截：因为发布包使用 ad-hoc 签名、没有做 Apple 公证，需要在“系统设置 → 隐私与安全性”里选择“仍要打开”。
+
+> **重要：** 首个带自动更新功能的版本必须手动安装一次。之前的版本没有更新器，无法自己升级到这一版；此后新版本才会自动提示。
+
+请把应用安装到“应用程序”文件夹再使用更新功能。如果直接从未挂载的只读磁盘映像里运行，应用会提示你先安装到“应用程序”。
+
+## 自动更新
+
+更新由 [Sparkle 2](https://sparkle-project.org) 完成，行为是：
+
+- 默认每小时检查一次（`SUScheduledCheckInterval = 3600`）。
+- 发现新版本后先提示，用户确认后才下载、安装并重启。
+- 不会在后台静默替换：`SUAutomaticallyUpdate` 与 `SUAllowsAutomaticUpdates` 均为 `false`。
+- 后台检查遇到网络错误不会打扰用户；手动“检查更新…”会明确显示“已是最新”或失败原因。
+- 更新提示不受主窗口隐藏或菜单栏图标关闭的影响。
+- 更新退出前会清理运行时并释放单实例锁，重启后只保留一个实例。
+
+更新清单地址为：
 
 ```text
-.build/dist/AutoInputSwitcher-macOS.dmg
-.build/dist/AutoInputSwitcher-macOS.zip
+https://github.com/xiangyumou/AutoInputSwitcher/releases/latest/download/appcast.xml
 ```
 
-Use the `.dmg` for the normal macOS app image. Open it and drag `AutoInputSwitcher.app` into `Applications`. The `.zip` is kept as a plain backup archive.
+清单内部指向更新包的下载地址始终是具体版本 tag（形如 `build-<run>-<attempt>`），不会使用 `latest`，避免清单与安装包版本错配。应用校验 Ed25519 签名，并要求清单本身已签名（`SURequireSignedFeed = true`）。
 
-## Usage
+## 本地开发
 
-Each installed app appears in the table. Select `-` to leave that app untouched, or select a keyboard input source to switch automatically when that app becomes active.
+```bash
+# 一次性完整校验：核心检查 + 单元测试 + 打包 + 产物校验
+./Scripts/test.sh
 
-The app uses `LSUIElement`, so it does not show a Dock icon or menu bar item. Closing the window keeps the app running. Reopen the app from Finder, Spotlight, or Launchpad to show the window again. Use the `退出` button to quit the background process.
+# 只构建应用 bundle
+./Scripts/build-app.sh
+open .build/AutoInputSwitcher.app
 
-## GitHub Actions
+# 单独运行测试
+swift test
+```
 
-`.github/workflows/release.yml` runs on pushes to `main` and manual dispatches.
+`Scripts/build-app.sh` 的环境变量：
 
-- `checks`: runs `./Scripts/test.sh` and is non-blocking.
-- `build`: packages the macOS app and uploads the dmg and zip artifacts.
-- `release`: creates a GitHub Release with `AutoInputSwitcher-macOS.dmg` and `AutoInputSwitcher-macOS.zip`.
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `VERSION` | `0.2.0` | `CFBundleShortVersionString` |
+| `BUILD_NUMBER` | `1` | `CFBundleVersion` |
+| `CONFIGURATION` | `release` | Swift 构建配置 |
+| `UNIVERSAL` | `1` | `1` 构建 arm64 + x86_64，`0` 只构建本机架构 |
+| `SIGN_IDENTITY` | `-` | 签名身份（ad-hoc） |
+| `FEED_URL` | 仓库 Releases 的 appcast 地址 | 覆盖 `SUFeedURL` |
+
+## 打包
+
+```bash
+./Scripts/package-release.sh   # 产出 ZIP、DMG、checksums.txt、build-manifest.json
+./Scripts/verify-package.sh    # 校验产物
+```
+
+产物写入 `.build/dist`：
+
+```text
+.build/dist/AutoInputSwitcher-macOS.dmg   # 手动安装用
+.build/dist/AutoInputSwitcher-macOS.zip   # Sparkle 更新用，ditto 打包以保留 bundle 结构
+.build/dist/checksums.txt
+.build/dist/build-manifest.json
+```
+
+`verify-package.sh` 会检查：双架构、最低系统版本、Sparkle.framework 与辅助进程是否完整、签名是否有效、bundle 内是否残留指向 `.build` 的绝对加载路径、ZIP 与 DMG 是否包含同一份应用。
+
+## 一次性生成 Sparkle 密钥
+
+更新信任只依赖一对 Ed25519 密钥：公钥随应用发布，私钥只用于签名更新包与更新清单。
+
+```bash
+# SPARKLE_TOOLS_DIR 指向含 bin/generate_keys 的 Sparkle 工具目录
+SPARKLE_TOOLS_DIR=.build/artifacts/sparkle/Sparkle/bin \
+  ./Scripts/setup-sparkle-keys.sh "$HOME/AutoInputSwitcher-sparkle-private-key.txt"
+```
+
+脚本会：
+
+1. 生成（或复用）密钥对，并把公钥写入 `Config/SparklePublicKey.txt`；
+2. 把私钥导出到你指定的新路径（权限 `600`）。
+
+然后：
+
+1. 在仓库的 Actions secrets 里新增 `SPARKLE_PRIVATE_KEY`，内容就是导出的私钥全文；
+2. 把私钥复制到离线介质另行备份，然后从本机删除；
+3. 提交 `Config/SparklePublicKey.txt`。
+
+注意：
+
+- 不要在 CI 里生成新密钥；每次发布都必须用同一把密钥。私钥不进入源码、日志和构建产物。
+- 私钥丢失后，已发布的版本无法再自动更新，用户只能重新手动安装。
+- `Config/SparklePublicKey.txt` 仍是占位值时，`build-app.sh` 会拒绝打包：无法验证更新的安装包不该发布。
+
+## CI/CD
+
+两个工作流分工明确：构建可取消，发布不可中断。
+
+**`.github/workflows/release.yml`（Build and Verify）**
+
+- 触发：PR、`main` 上的 push、手动触发。权限只有 `contents: read`。
+- 同一分支上的新构建会取消旧构建。
+- `checks`：`swift run AutoInputSwitcherCoreChecks` 与 `swift test`，**失败即阻断打包**（没有 `continue-on-error`）。
+- `build`：下载固定版本的 Sparkle 工具（带 sha256 校验），打包出 ZIP、DMG、`checksums.txt`、`build-manifest.json`，然后由 `verify-package.sh` 校验，最后上传为构建产物。
+- 只有 `main` 上的 push 或 `main` 上的手动构建才具备发布资格；PR 只做验证。
+
+**`.github/workflows/publish.yml`（Publish Release）**
+
+- 触发：`workflow_run`，即上游 Build and Verify 在 `main` 上完成后。权限 `contents: write`。
+- 只接受结论为成功、来源是本仓库、并且不是 PR 的上游运行。
+- 按准确的 `workflow_run.id` 下载产物，不使用“最新构建”之类的模糊匹配。
+- 发布串行执行（`cancel-in-progress: false`）。签名只运行受信的 `main` 工作流代码，不执行产物里的任何脚本。
+- 校验清单记录的 tag、提交与上游一致；上游提交必须仍是 `main` 的 HEAD；版本必须高于当前正式版。不满足则跳过这次过期构建。
+- 缺少 `SPARKLE_PRIVATE_KEY` 或签名校验失败会直接失败，不会产出正式版。
+- 流程：生成并签名 `appcast.xml` → 创建草稿 Release → 上传 ZIP、DMG、appcast、校验和 → 公开前再确认提交仍然是最新 → 公开并标记 latest → 验证公开清单与附件可下载。
+- 失败会保留未公开草稿以便诊断，同一构建重跑会复用草稿继续上传。已发布的版本不会被删除、覆盖或重写 tag。
+
+**版本编号**统一取上游 Build and Verify 的编号：
+
+| 名称 | 形式 |
+|---|---|
+| 显示版本 | `0.2.<run_number>` |
+| `CFBundleVersion` | `<run_number>.<run_attempt>` |
+| tag | `build-<run_number>-<run_attempt>` |
+
+同一构建重跑时版本号递增；发布工作流自身的编号不参与版本计算。“只发布最新成功版本”指取消和跳过尚未发布的过期构建，已经公开的版本会保留。
+
+## 已知限制
+
+- 发布包使用 ad-hoc 签名，未使用 Developer ID，也未做 Apple 公证：首次安装需要手动在“隐私与安全性”里允许。
+- Ed25519 更新签名保证的是“更新来自持有私钥的发布者”，不能替代 Gatekeeper 信任。
+- 暂不支持增量更新、多发布通道和自建更新服务器。
+
+## 项目结构
+
+```text
+Sources/AutoInputSwitcherCore/       规则、配置存储、列表过滤（不依赖 AppKit / Sparkle）
+Sources/AutoInputSwitcherApp/        运行时、界面、系统集成、更新控制器
+Sources/AutoInputSwitcher/           可执行入口
+Sources/AutoInputSwitcherCoreChecks/ 核心逻辑自检
+Tests/                               单元测试
+Scripts/                             构建、打包、校验、appcast、密钥脚本
+Config/SparklePublicKey.txt          更新公钥（可公开、可提交）
+```
+

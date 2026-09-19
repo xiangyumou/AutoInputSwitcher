@@ -1,32 +1,64 @@
 import Foundation
 
-public struct JSONRuleStore: Sendable {
+/// Persistence boundary for per-application rules.
+///
+/// Injectable so the app and the tests can substitute their own storage without
+/// touching the real user configuration.
+public protocol RuleStore: Sendable {
+    var url: URL { get }
+    func load() throws -> [AppRule]
+    func save(_ rules: [AppRule]) throws
+}
+
+/// Stores rules as a JSON array in a single file.
+///
+/// load() only returns an empty array when the file genuinely does not exist.
+/// Every other failure (unreadable file, malformed JSON, permission problems)
+/// is surfaced as a thrown error, so a broken file is never mistaken for an
+/// empty rule set that would then be written back over the user's data.
+public struct JSONRuleStore: RuleStore {
     public let url: URL
 
     public init(url: URL) {
         self.url = url
     }
 
-    public static func applicationSupportStore(
+    public static func applicationSupportDirectory(
         appName: String = "AutoInputSwitcher"
-    ) -> JSONRuleStore {
+    ) -> URL {
         let baseURL = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        )[0]
-        let url = baseURL
-            .appendingPathComponent(appName, isDirectory: true)
-            .appendingPathComponent("rules.json")
-        return JSONRuleStore(url: url)
+        ).first ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+
+        return baseURL.appendingPathComponent(appName, isDirectory: true)
+    }
+
+    public static func applicationSupportStore(
+        appName: String = "AutoInputSwitcher"
+    ) -> JSONRuleStore {
+        JSONRuleStore(
+            url: applicationSupportDirectory(appName: appName)
+                .appendingPathComponent("rules.json")
+        )
+    }
+
+    public var fileExists: Bool {
+        FileManager.default.fileExists(atPath: url.path)
     }
 
     public func load() throws -> [AppRule] {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return []
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            if Self.isMissingFileError(error) {
+                return []
+            }
+            throw error
         }
 
-        let data = try Data(contentsOf: url)
-        return try Self.decoder.decode([AppRule].self, from: data)
+        return try Self.makeDecoder().decode([AppRule].self, from: data)
     }
 
     public func save(_ rules: [AppRule]) throws {
@@ -36,15 +68,34 @@ public struct JSONRuleStore: Sendable {
             withIntermediateDirectories: true
         )
 
-        let data = try Self.encoder.encode(rules)
+        let data = try Self.makeEncoder().encode(rules)
         try data.write(to: url, options: [.atomic])
     }
 
-    private static let encoder: JSONEncoder = {
+    /// True when the underlying Cocoa error means "there is no file here yet".
+    static func isMissingFileError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileReadNoSuchFileError {
+            return true
+        }
+
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return isMissingFileError(underlying)
+        }
+
+        return false
+    }
+
+    // Encoders and decoders are created per call: they are cheap, and this keeps
+    // the store free of shared mutable state.
+    private static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
-    }()
+    }
 
-    private static let decoder = JSONDecoder()
+    private static func makeDecoder() -> JSONDecoder {
+        JSONDecoder()
+    }
 }

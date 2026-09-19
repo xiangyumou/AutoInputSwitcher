@@ -1,6 +1,5 @@
-import AppKit
+import AutoInputSwitcherApp
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+MainActor.assumeIsolated {
+    ApplicationEntryPoint.run()
+}

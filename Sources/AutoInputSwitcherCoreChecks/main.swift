@@ -13,6 +13,10 @@ struct CoreChecks {
         try testApplicationListFilterMatchesNameAndBundleID()
         try testApplicationListFilterShowsOnlyConfiguredEntries()
         try testApplicationListFilterShowsOnlyUnconfiguredEntries()
+        try testNormalisingRuleSetKeepsFirstRuleAndDropsInvalidEntries()
+        try testIdentifierValidationRejectsPlaceholderAndBlankValues()
+        try testJSONRuleStoreThrowsOnCorruptFileAndKeepsItIntact()
+        try testApplicationListFilterRequiresInstalledApplicationsWhenUnconfigured()
         print("Core checks passed")
     }
 
@@ -169,6 +173,102 @@ struct CoreChecks {
 
         try expectEqual(filter.includes(terminal), true)
         try expectEqual(filter.includes(weChat), false)
+    }
+
+    private static func testNormalisingRuleSetKeepsFirstRuleAndDropsInvalidEntries() throws {
+        let first = AppRule(
+            bundleIdentifier: "com.apple.Terminal",
+            applicationName: "Terminal",
+            inputSourceID: "com.apple.keylayout.US",
+            inputSourceName: "U.S."
+        )
+        let duplicate = AppRule(
+            bundleIdentifier: "com.apple.Terminal",
+            applicationName: "Terminal",
+            inputSourceID: "com.apple.keylayout.ABC",
+            inputSourceName: "ABC"
+        )
+        let blankIdentifier = AppRule(
+            bundleIdentifier: "   ",
+            applicationName: "Blank",
+            inputSourceID: "com.apple.keylayout.US",
+            inputSourceName: "U.S."
+        )
+        let placeholder = AppRule(
+            bundleIdentifier: "com.apple.Safari",
+            applicationName: "Safari",
+            inputSourceID: "-",
+            inputSourceName: "-"
+        )
+
+        let ruleSet = RuleSet(normalizing: [first, duplicate, blankIdentifier, placeholder])
+
+        try expectEqual(ruleSet.rules, [first])
+        try expectEqual(ruleSet.rule(forBundleIdentifier: "com.apple.Terminal"), first)
+    }
+
+    private static func testIdentifierValidationRejectsPlaceholderAndBlankValues() throws {
+        try expectEqual(RuleSet.isValidIdentifier("com.apple.Terminal"), true)
+        try expectEqual(RuleSet.isValidIdentifier("  com.apple.Terminal  "), true)
+        try expectEqual(RuleSet.isValidIdentifier(""), false)
+        try expectEqual(RuleSet.isValidIdentifier("   "), false)
+        try expectEqual(RuleSet.isValidIdentifier("-"), false)
+        try expectEqual(RuleSet.noSwitchInputSourceID, "-")
+    }
+
+    private static func testJSONRuleStoreThrowsOnCorruptFileAndKeepsItIntact() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let url = directory.appendingPathComponent("rules.json")
+        let store = JSONRuleStore(url: url)
+        let corrupt = Data("{ this is not a rule list".utf8)
+        try corrupt.write(to: url)
+
+        do {
+            _ = try store.load()
+            throw CheckFailure("Expected the corrupt rule file to fail loading")
+        } catch is DecodingError {
+            // Expected: malformed JSON is reported instead of being read as an
+            // empty rule set.
+        }
+
+        try expectEqual(try Data(contentsOf: url), corrupt)
+        try expectEqual(store.fileExists, true)
+        try expectEqual(
+            try JSONRuleStore(url: directory.appendingPathComponent("missing.json")).load(),
+            []
+        )
+    }
+
+    private static func testApplicationListFilterRequiresInstalledApplicationsWhenUnconfigured() throws {
+        let installed = ApplicationListEntry(
+            displayName: "Terminal",
+            bundleIdentifier: "com.apple.Terminal"
+        )
+        let leftover = ApplicationListEntry(
+            displayName: "Ghost",
+            bundleIdentifier: "com.example.ghost",
+            isInstalled: false
+        )
+
+        let unconfigured = ApplicationListFilter(scope: .unconfigured)
+        try expectEqual(unconfigured.includes(installed), true)
+        try expectEqual(unconfigured.includes(leftover), false)
+
+        let configured = ApplicationListFilter(
+            scope: .configured,
+            configuredBundleIdentifiers: ["com.example.ghost"]
+        )
+        try expectEqual(configured.includes(leftover), true)
+        try expectEqual(configured.includes(installed), false)
     }
 
     private static func expectEqual<T: Equatable>(_ actual: T, _ expected: T) throws {

@@ -16,6 +16,10 @@ struct MainWindowView: View {
         .padding(18)
         .frame(minWidth: 960, minHeight: 620)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: runtime.iconCacheGeneration) { _, _ in
+            // Icons are cached by path and the scan invalidates them in one step.
+            loadedIcons.removeAll()
+        }
     }
 
     private var topBar: some View {
@@ -43,31 +47,23 @@ struct MainWindowView: View {
             Toggle(
                 "开机自启",
                 isOn: Binding(
-                    get: { runtime.launchAtLoginEnabled },
+                    get: { runtime.isLaunchAtLoginEnabled },
                     set: { runtime.setLaunchAtLoginEnabled($0) }
                 )
             )
             .toggleStyle(.switch)
             .accessibilityLabel("开机自启")
 
-            Toggle(
-                "菜单栏",
-                isOn: Binding(
-                    get: { UserDefaults.standard.bool(forKey: "showMenuBarIcon") },
-                    set: {
-                        UserDefaults.standard.set($0, forKey: "showMenuBarIcon")
-                        runtime.updateMenuBarIconVisibility?($0)
-                    }
-                )
-            )
-            .toggleStyle(.switch)
-            .accessibilityLabel("显示菜单栏图标")
+            Toggle("菜单栏图标", isOn: $runtime.showMenuBarIcon)
+                .toggleStyle(.switch)
+                .accessibilityLabel("显示菜单栏图标")
 
             Button {
-                runtime.reloadApplications()
+                runtime.refreshApplications()
             } label: {
                 Label("刷新应用", systemImage: "arrow.clockwise")
             }
+            .disabled(runtime.isScanning)
             .accessibilityLabel("刷新应用列表")
 
             Button {
@@ -76,6 +72,10 @@ struct MainWindowView: View {
                 Label("刷新输入法", systemImage: "keyboard")
             }
             .accessibilityLabel("刷新输入法列表")
+
+            if let updateController = runtime.updateController {
+                CheckForUpdatesButton(controller: updateController)
+            }
 
             Button(role: .destructive) {
                 onQuit()
@@ -97,7 +97,7 @@ struct MainWindowView: View {
         HStack(spacing: 12) {
             TextField("搜索应用或 Bundle ID", text: $runtime.searchText)
                 .textFieldStyle(.roundedBorder)
-                .frame(minWidth: 280, idealWidth: 360, maxWidth: 420)
+                .frame(minWidth: 240, idealWidth: 300, maxWidth: 380)
                 .accessibilityLabel("搜索应用或 Bundle ID")
 
             Picker("显示范围", selection: $runtime.applicationListScope) {
@@ -109,14 +109,9 @@ struct MainWindowView: View {
             .frame(width: 220)
             .accessibilityLabel("应用显示范围")
 
-            Spacer()
+            Spacer(minLength: 12)
 
-            Text(statusText)
-                .font(.caption)
-                .foregroundStyle(statusColor)
-                .lineLimit(1)
-                .monospacedDigit()
-                .accessibilityLabel(statusText)
+            statusArea
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -124,6 +119,43 @@ struct MainWindowView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        }
+    }
+
+    private var statusArea: some View {
+        HStack(spacing: 8) {
+            Text(runtime.statusText)
+                .font(.caption)
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .monospacedDigit()
+                .accessibilityLabel(runtime.statusText)
+
+            if runtime.hasStorageFailure {
+                Button("重新读取") {
+                    runtime.reloadRulesFromDisk()
+                }
+                .controlSize(.small)
+
+                Button("在 Finder 中显示规则文件") {
+                    runtime.revealRulesFileInFinder()
+                }
+                .controlSize(.small)
+            } else if runtime.scanStatus != nil {
+                Button("重试") {
+                    runtime.refreshApplications()
+                }
+                .controlSize(.small)
+                .disabled(runtime.isScanning)
+            }
+
+            if runtime.launchAtLoginStatus == .requiresApproval {
+                Button("打开系统设置") {
+                    runtime.openLoginItemsSystemSettings()
+                }
+                .controlSize(.small)
+            }
         }
     }
 
@@ -155,27 +187,23 @@ struct MainWindowView: View {
         Table(runtime.filteredInstalledApplications) {
             TableColumn("应用") { application in
                 HStack(spacing: 8) {
-                    if let icon = loadedIcons[application.bundleIdentifier] {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .frame(width: 24, height: 24)
-                            .accessibilityHidden(true)
-                    } else {
-                        Image(systemName: "app.fill")
-                            .resizable()
-                            .frame(width: 24, height: 24)
-                            .foregroundStyle(.tertiary)
-                            .accessibilityHidden(true)
-                            .onAppear { loadIcon(for: application) }
-                    }
+                    applicationIcon(for: application)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(application.name)
                             .font(.system(size: 13, weight: .medium))
-                        Text(application.url.deletingLastPathComponent().path)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+
+                        if let url = application.url {
+                            Text(url.deletingLastPathComponent().path)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        } else {
+                            Text("未找到应用")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
             }
@@ -198,12 +226,13 @@ struct MainWindowView: View {
                     )
                 ) {
                     Text("-").tag(AppRuntime.noSwitchInputSourceID)
-                    ForEach(runtime.inputSources) { source in
-                        Text(source.name).tag(source.id)
+                    ForEach(runtime.inputSourceChoices(for: application)) { choice in
+                        Text(choice.name).tag(choice.id)
                     }
                 }
                 .labelsHidden()
                 .frame(width: 230)
+                .disabled(!runtime.ruleEditingEnabled)
                 .accessibilityLabel("\(application.name) 的输入法")
             }
             .width(250)
@@ -211,23 +240,50 @@ struct MainWindowView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private var statusText: String {
-        if !runtime.statusMessage.isEmpty {
-            return runtime.statusMessage
+    @ViewBuilder
+    private func applicationIcon(for application: InstalledApplication) -> some View {
+        if let url = application.url {
+            if let icon = loadedIcons[url.path] {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: "app.fill")
+                    .resizable()
+                    .frame(width: 24, height: 24)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+                    .onAppear { loadIcon(for: url) }
+            }
+        } else {
+            Image(systemName: "questionmark.app.dashed")
+                .resizable()
+                .frame(width: 24, height: 24)
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
-
-        return "显示 \(runtime.filteredInstalledApplications.count) 个应用"
     }
 
     private var statusColor: Color {
-        runtime.statusMessage.contains("失败") ? .red : .secondary
+        switch runtime.primaryStatus?.severity {
+        case .error:
+            return .red
+        case .warning:
+            return .orange
+        case .info, .none:
+            return .secondary
+        }
     }
 
-    private func loadIcon(for application: InstalledApplication) {
-        guard loadedIcons[application.bundleIdentifier] == nil else { return }
-        let icon = NSWorkspace.shared.icon(forFile: application.url.path)
+    private func loadIcon(for url: URL) {
+        guard loadedIcons[url.path] == nil else {
+            return
+        }
+
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
         icon.size = NSSize(width: 24, height: 24)
-        loadedIcons[application.bundleIdentifier] = icon
+        loadedIcons[url.path] = icon
     }
 
     private func metric(title: String, value: String) -> some View {
@@ -242,5 +298,20 @@ struct MainWindowView: View {
         .frame(minWidth: 58, alignment: .trailing)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)：\(value)")
+    }
+}
+
+/// Separate view so the update button observes the updater state directly.
+private struct CheckForUpdatesButton: View {
+    @ObservedObject var controller: UpdateController
+
+    var body: some View {
+        Button {
+            controller.checkForUpdates()
+        } label: {
+            Label("检查更新…", systemImage: "arrow.triangle.2.circlepath")
+        }
+        .disabled(!controller.canCheckForUpdates)
+        .accessibilityLabel("检查更新")
     }
 }

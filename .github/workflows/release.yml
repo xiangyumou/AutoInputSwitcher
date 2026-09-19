@@ -1,23 +1,38 @@
-name: Build and Release
+name: Build and Verify
+
+# 只负责“构建并验证”，绝不接触 Release。发布由 publish.yml 通过 workflow_run 托管，
+# 这样可取消的构建与不可中断的发布会话彼此隔离。
 
 on:
+  pull_request:
   push:
     branches:
       - main
   workflow_dispatch:
 
+# 默认仅需读取权限：这一层不写任何仓库内容。
 permissions:
-  contents: write
+  contents: read
 
+# 同一分支上的新构建取消旧构建。
 concurrency:
-  group: release-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  APP_NAME: AutoInputSwitcher
+  # 版本统一由本工作流的编号推导：显示版本 0.2.<run_number>，构建号 <run>.<attempt>。
+  VERSION: 0.2.${{ github.run_number }}
+  BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
+  TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
+  # 固定版本的 Sparkle SPM 产物（含 bin/ 工具与 Sparkle.framework），带校验和下载。
+  SPARKLE_VERSION: 2.10.0
+  SPARKLE_TOOLS_SHA256: 17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959
 
 jobs:
   checks:
-    name: Non-blocking checks
+    name: Checks and tests
     runs-on: macos-latest
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -29,11 +44,16 @@ jobs:
           xcodebuild -version || true
 
       - name: Run core checks
-        run: ./Scripts/test.sh
+        run: swift run AutoInputSwitcherCoreChecks
+
+      - name: Run unit tests
+        run: swift test
 
   build:
-    name: Build app
+    name: Build and verify package
     runs-on: macos-latest
+    needs:
+      - checks
 
     steps:
       - name: Checkout
@@ -44,52 +64,59 @@ jobs:
           swift --version
           xcodebuild -version || true
 
-      - name: Package app
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
+      - name: Fail fast when the update public key is not configured
+        run: |
+          set -euo pipefail
+          if grep -qE 'REPLACE_WITH_SPARKLE_ED25519_PUBLIC_KEY' Config/SparklePublicKey.txt; then
+            echo "Config/SparklePublicKey.txt 仍是占位公钥，无法产出可自动更新的安装包。" >&2
+            echo "请在开发者本机执行 Scripts/setup-sparkle-keys.sh，提交真实公钥后再构建。" >&2
+            echo "详见 README 的「一次性生成 Sparkle 密钥」一节。" >&2
+            exit 1
+          fi
+
+      - name: Fetch pinned Sparkle tools
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/Sparkle-for-Swift-Package-Manager.zip"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-for-Swift-Package-Manager.zip"
+          echo "$SPARKLE_TOOLS_SHA256  $archive" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/sparkle-tools"
+          ditto -x -k "$archive" "$RUNNER_TEMP/sparkle-tools"
+          chmod +x "$RUNNER_TEMP/sparkle-tools/bin/"*
+          "$RUNNER_TEMP/sparkle-tools/bin/generate_appcast" --version || true
+          echo "SPARKLE_TOOLS_DIR=$RUNNER_TEMP/sparkle-tools" >> "$GITHUB_ENV"
+
+      - name: Build ZIP and DMG
         run: ./Scripts/package-release.sh
 
-      - name: Upload app artifact
+      - name: Verify package
+        run: ./Scripts/verify-package.sh
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: AutoInputSwitcher-macOS
           path: |
-            .build/dist/AutoInputSwitcher-macOS.dmg
             .build/dist/AutoInputSwitcher-macOS.zip
+            .build/dist/AutoInputSwitcher-macOS.dmg
+            .build/dist/checksums.txt
+            .build/dist/build-manifest.json
           if-no-files-found: error
+          retention-days: 14
 
-  release:
-    name: Publish release
-    runs-on: ubuntu-latest
-    needs:
-      - build
-
-    steps:
-      - name: Download app artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: AutoInputSwitcher-macOS
-          path: release-assets
-
-      - name: Create GitHub release
+      - name: Report publish eligibility
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG_NAME: build-${{ github.run_number }}
-          TITLE: AutoInputSwitcher build ${{ github.run_number }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
         run: |
-          ZIP_PATH="$(find release-assets -type f -name 'AutoInputSwitcher-macOS.zip' | head -n 1)"
-          DMG_PATH="$(find release-assets -type f -name 'AutoInputSwitcher-macOS.dmg' | head -n 1)"
-          if [ -z "$DMG_PATH" ] || [ -z "$ZIP_PATH" ]; then
-            echo "Release assets were not downloaded" >&2
-            exit 1
+          set -euo pipefail
+          if [ "$REF_NAME" = "refs/heads/main" ] && [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "构建 $TAG 具备发布资格（main 分支手动构建）。"
+          elif [ "$REF_NAME" = "refs/heads/main" ] && [ "$EVENT_NAME" = "push" ]; then
+            echo "构建 $TAG 具备发布资格（main 分支 push）。"
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "构建 $TAG 仅用于验证（PR）。"
+          else
+            echo "构建 $TAG 仅用于验证（非 main 分支）。"
           fi
-
-          gh release delete "$TAG_NAME" --repo "$GH_REPO" --cleanup-tag --yes || true
-
-          gh release create "$TAG_NAME" "$DMG_PATH" "$ZIP_PATH" \
-            --repo "$GH_REPO" \
-            --target "$GITHUB_SHA" \
-            --title "$TITLE" \
-            --notes "Automated macOS build from $GITHUB_SHA. Download AutoInputSwitcher-macOS.dmg for the app image, or AutoInputSwitcher-macOS.zip as a plain archive. The checks job is non-blocking; build and release depend only on the package step." \
-            --latest
