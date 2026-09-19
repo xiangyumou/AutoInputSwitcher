@@ -42,13 +42,19 @@ final class SystemInputSourceManager: NSObject, InputSourceManaging {
         guard observers.isEmpty else { return }
 
         let center = DistributedNotificationCenter.default()
+        // The block form returns an observer token; the selector form returns
+        // Void and would leave no way to unregister. Delivery is pinned to the
+        // main queue so the main-actor handler never runs off the main thread.
         observers.append(
             center.addObserver(
-                self,
-                selector: #selector(handleEnabledInputSourcesChanged),
-                name: Self.enabledInputSourcesChanged,
-                object: nil
-            )
+                forName: Self.enabledInputSourcesChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.handleEnabledInputSourcesChanged()
+                }
+            }
         )
     }
 
@@ -61,7 +67,7 @@ final class SystemInputSourceManager: NSObject, InputSourceManaging {
         observers.removeAll()
     }
 
-    @objc private func handleEnabledInputSourcesChanged() {
+    private func handleEnabledInputSourcesChanged() {
         invalidateCache()
         changeHandler?()
     }
@@ -94,7 +100,7 @@ final class SystemInputSourceManager: NSObject, InputSourceManaging {
 
         let list = TISCreateInputSourceList(filters as CFDictionary, false).takeRetainedValue()
         return (list as NSArray)
-            .compactMap { $0 as? TISInputSource }
+            .map { $0 as! TISInputSource }
             .compactMap { source in
                 guard
                     let id = stringProperty(source, kTISPropertyInputSourceID),
@@ -113,7 +119,7 @@ final class SystemInputSourceManager: NSObject, InputSourceManaging {
             kTISPropertyInputSourceID as String: id
         ]
         let list = TISCreateInputSourceList(filters as CFDictionary, false).takeRetainedValue()
-        return (list as NSArray).compactMap { $0 as? TISInputSource }.first
+        return (list as NSArray).map { $0 as! TISInputSource }.first
     }
 
     private func stringProperty(_ source: TISInputSource, _ key: CFString) -> String? {

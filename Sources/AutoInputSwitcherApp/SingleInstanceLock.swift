@@ -1,4 +1,5 @@
 import Foundation
+import AutoInputSwitcherCore
 
 #if canImport(Darwin)
 import Darwin
