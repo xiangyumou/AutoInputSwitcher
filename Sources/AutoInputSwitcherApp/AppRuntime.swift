@@ -78,7 +78,7 @@ final class AppRuntime: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
 
-        loadRulesFromDisk(reportingSuccess: false)
+        loadRulesAtStartup()
         refreshInputSources()
         reportLoginStatus()
         startMonitoring()
@@ -114,6 +114,12 @@ final class AppRuntime: ObservableObject {
 
     func reloadRulesFromDisk() {
         loadRulesFromDisk(reportingSuccess: true)
+    }
+
+    /// Loads the rules the way a cold start does: silently, so the status line
+    /// keeps showing the application count instead of a confirmation message.
+    func loadRulesAtStartup() {
+        loadRulesFromDisk(reportingSuccess: false)
     }
 
     private func loadRulesFromDisk(reportingSuccess: Bool) {
