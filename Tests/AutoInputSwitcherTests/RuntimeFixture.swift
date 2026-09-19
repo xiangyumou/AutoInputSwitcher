@@ -61,8 +61,10 @@ func makeFixture(
         ownBundleIdentifier: "com.local.AutoInputSwitcher"
     )
 
+    // AppRuntime.init already loads the rules from the store without publishing a
+    // status message, which is what a cold start looks like. A manual reload is a
+    // separate, user triggered action, so it must not be simulated here.
     runtime.reloadInputSources()
-    runtime.reloadRulesFromDisk()
 
     return RuntimeFixture(
         runtime: runtime,
@@ -114,3 +116,11 @@ func waitUntil(
     }
 }
 
+@MainActor
+extension RuntimeFixture {
+    /// Runs the fixture scanner and waits until the runtime published its result.
+    func scan() async {
+        runtime.refreshApplications()
+        await waitUntil { !runtime.isScanning }
+    }
+}

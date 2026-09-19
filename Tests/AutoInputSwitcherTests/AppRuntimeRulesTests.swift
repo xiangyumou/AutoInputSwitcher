@@ -16,6 +16,11 @@ final class AppRuntimeRulesTests: XCTestCase {
         XCTAssertEqual(fixture.runtime.ruleSet.rules.count, 1)
         XCTAssertTrue(fixture.runtime.ruleEditingEnabled)
         XCTAssertFalse(fixture.runtime.hasStorageFailure)
+        // Cold start loads the rules silently; only a manual reload reports it.
+        XCTAssertNil(fixture.runtime.storageStatus)
+
+        fixture.runtime.reloadRulesFromDisk()
+
         XCTAssertEqual(fixture.runtime.storageStatus, .rulesReloaded)
     }
 
@@ -172,6 +177,7 @@ final class AppRuntimeRulesTests: XCTestCase {
             rules: [makeRule(bundleIdentifier: "com.example.ghost", applicationName: "Ghost")],
             installedApplications: [terminal]
         )
+        await fixture.scan()
 
         XCTAssertEqual(
             fixture.runtime.displayApplications.map(\.bundleIdentifier),
@@ -222,6 +228,7 @@ final class AppRuntimeRulesTests: XCTestCase {
             rules: [makeRule(bundleIdentifier: "com.example.ghost", applicationName: "Ghost")],
             installedApplications: [terminal]
         )
+        await fixture.scan()
 
         fixture.runtime.applicationListScope = .unconfigured
         XCTAssertEqual(

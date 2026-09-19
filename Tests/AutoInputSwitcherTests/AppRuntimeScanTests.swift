@@ -23,7 +23,9 @@ final class AppRuntimeScanTests: XCTestCase {
 
         XCTAssertEqual(
             fixture.runtime.installedApplications.map(\.bundleIdentifier),
-            ["com.apple.Safari", "com.apple.Terminal"]
+            // The runtime publishes the scanner output as is; the search order
+            // itself is covered by ApplicationScannerTests.
+            ["com.apple.Terminal", "com.apple.Safari"]
         )
         XCTAssertGreaterThan(fixture.runtime.iconCacheGeneration, generation)
         XCTAssertNil(fixture.runtime.scanStatus)
@@ -161,4 +163,3 @@ final class AppRuntimeScanTests: XCTestCase {
         XCTAssertFalse(fixture.runtime.isScanning)
     }
 }
-
