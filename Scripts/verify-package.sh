@@ -98,7 +98,7 @@ check_plist_value() {
     if [ "$actual" = "$expected" ]; then
         pass "$description"
     else
-        fail "$description（期望 $expected，实际 ${actual:-<空>}）"
+        fail "${description}（期望 ${expected}，实际 ${actual:-<空>}）"
     fi
 }
 
@@ -162,7 +162,7 @@ MANIFEST_TAG="$(jq -r '.tag // empty' "$MANIFEST_PATH" 2>/dev/null || true)"
 if [ -z "$MANIFEST_VERSION" ] || [ -z "$MANIFEST_BUILD_NUMBER" ] || [ -z "$MANIFEST_TAG" ]; then
     fail "清单缺少 version / buildNumber / tag"
 else
-    pass "清单版本为 $MANIFEST_VERSION（构建号 $MANIFEST_BUILD_NUMBER，tag $MANIFEST_TAG）"
+    pass "清单版本为 ${MANIFEST_VERSION}（构建号 ${MANIFEST_BUILD_NUMBER}，tag ${MANIFEST_TAG}）"
 fi
 
 if [ -z "${VERSION:-}" ]; then
@@ -271,7 +271,7 @@ if [ -f "$PUBLIC_KEY_FILE" ]; then
         fail "SUPublicEDKey 与 Config/SparklePublicKey.txt 不一致"
     fi
 else
-    fail "缺少 $PUBLIC_KEY_FILE，无法确认公钥来源"
+    fail "缺少 ${PUBLIC_KEY_FILE}，无法确认公钥来源"
 fi
 
 section "架构"

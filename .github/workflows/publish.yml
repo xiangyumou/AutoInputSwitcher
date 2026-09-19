@@ -92,7 +92,7 @@ jobs:
 
           expected_tag="build-${UPSTREAM_RUN}-${UPSTREAM_ATTEMPT}"
           if [ "$tag" != "$expected_tag" ]; then
-            echo "::error::清单 tag 为 $tag，与上游构建 $expected_tag 不一致。"
+            echo "::error::清单 tag 为 ${tag}，与上游构建 $expected_tag 不一致。"
             exit 1
           fi
 
@@ -103,7 +103,7 @@ jobs:
 
           for name in AutoInputSwitcher-macOS.zip AutoInputSwitcher-macOS.dmg checksums.txt build-manifest.json; do
             if [ ! -s "dist/$name" ]; then
-              echo "::error::缺少产物文件 dist/$name。"
+              echo "::error::缺少产物文件 dist/${name}。"
               exit 1
             fi
           done
@@ -111,7 +111,7 @@ jobs:
           # 上游 SHA 必须仍是 main 的 HEAD：更晚的 push 会让这次构建过期。
           main_sha="$(gh api "repos/$GH_REPO/commits/main" --jq '.sha')"
           if [ "$main_sha" != "$UPSTREAM_SHA" ]; then
-            skip "上游提交 $UPSTREAM_SHA 已不是 main 的 HEAD（当前 $main_sha），跳过这次过期构建。"
+            skip "上游提交 $UPSTREAM_SHA 已不是 main 的 HEAD（当前 ${main_sha}），跳过这次过期构建。"
             exit 0
           fi
 
@@ -132,7 +132,7 @@ jobs:
           fi
 
           if [ "$is_newer" -ne 1 ]; then
-            skip "版本 $version（$tag）不高于已发布的最新版本 $latest_tag，跳过。"
+            skip "版本 ${version}（${tag}）不高于已发布的最新版本 ${latest_tag}，跳过。"
             exit 0
           fi
 
@@ -141,7 +141,7 @@ jobs:
           echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
           echo "head_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
           echo "eligible=true" >> "$GITHUB_OUTPUT"
-          echo "将发布 $tag（版本 $version，构建号 $build_number，提交 $UPSTREAM_SHA）"
+          echo "将发布 ${tag}（版本 ${version}，构建号 ${build_number}，提交 ${UPSTREAM_SHA}）"
 
       - name: Fetch pinned Sparkle tools
         if: steps.upstream.outputs.eligible == 'true'
@@ -193,11 +193,11 @@ jobs:
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "复用已有的未公开草稿 $TAG，继续上传缺失或更新的附件。"
+            echo "复用已有的未公开草稿 ${TAG}，继续上传缺失或更新的附件。"
           else
             notes="$(mktemp)"
             cat > "$notes" <<NOTES_EOF
-          自动构建的 macOS 版本 $VERSION（构建号 $BUILD_NUMBER），提交 $HEAD_SHA。
+          自动构建的 macOS 版本 ${VERSION}（构建号 ${BUILD_NUMBER}），提交 ${HEAD_SHA}。
 
           - 安装：下载 AutoInputSwitcher-macOS.dmg 并拖入「应用程序」，或解压 ZIP 后运行其中的应用。
           - 更新：应用内置 Sparkle 更新器，默认每小时检查一次；也可在菜单栏菜单里选择「检查更新…」。
@@ -208,10 +208,10 @@ jobs:
               --repo "$GH_REPO" \
               --draft \
               --target "$HEAD_SHA" \
-              --title "$APP_NAME $VERSION（build $BUILD_NUMBER）" \
+              --title "$APP_NAME ${VERSION}（build ${BUILD_NUMBER}）" \
               --notes-file "$notes"
             find "$notes" -delete
-            echo "已创建草稿 $TAG。"
+            echo "已创建草稿 ${TAG}。"
           fi
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -227,7 +227,7 @@ jobs:
 
           for name in AutoInputSwitcher-macOS.zip AutoInputSwitcher-macOS.dmg appcast.xml checksums.txt; do
             if [ ! -s "dist/$name" ]; then
-              echo "::error::缺少待上传文件 dist/$name。" >&2
+              echo "::error::缺少待上传文件 dist/${name}。" >&2
               exit 1
             fi
           done
@@ -252,7 +252,7 @@ jobs:
           set -euo pipefail
           main_sha="$(gh api "repos/$GH_REPO/commits/main" --jq '.sha')"
           if [ "$main_sha" != "$UPSTREAM_SHA" ]; then
-            echo "::notice::main 已前进到 $main_sha；保留未公开草稿，不公开这次过期构建。"
+            echo "::notice::main 已前进到 ${main_sha}；保留未公开草稿，不公开这次过期构建。"
             echo "stale=true" >> "$GITHUB_OUTPUT"
           else
             echo "stale=false" >> "$GITHUB_OUTPUT"
@@ -267,7 +267,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release edit "$TAG" --repo "$GH_REPO" --draft=false --latest
-          echo "::notice::已公开发布 $TAG。"
+          echo "::notice::已公开发布 ${TAG}。"
 
       - name: Verify the public feed and assets
         if: steps.draft.outputs.skip == 'false' && steps.freshness.outputs.stale == 'false'
@@ -297,15 +297,15 @@ jobs:
           grep -qF "sparkle:version>$BUILD_NUMBER<" "$appcast" \
             || { echo "::error::公开清单的构建号与 $BUILD_NUMBER 不一致。" >&2; exit 1; }
           grep -qF "/download/$TAG/" "$appcast" \
-            || { echo "::error::公开清单的下载地址未指向 $TAG。" >&2; exit 1; }
+            || { echo "::error::公开清单的下载地址未指向 ${TAG}。" >&2; exit 1; }
 
           for name in AutoInputSwitcher-macOS.zip AutoInputSwitcher-macOS.dmg appcast.xml checksums.txt; do
             code="$(curl -sL -o /dev/null -w '%{http_code}' --retry 2 "$base/$name")"
-            [ "$code" = "200" ] || { echo "::error::附件 $name 下载失败（HTTP $code）。" >&2; exit 1; }
+            [ "$code" = "200" ] || { echo "::error::附件 $name 下载失败（HTTP ${code}）。" >&2; exit 1; }
           done
 
           latest_code="$(curl -sL -o /dev/null -w '%{http_code}' --retry 2 "https://github.com/$GH_REPO/releases/latest/download/appcast.xml")"
           [ "$latest_code" = "200" ] \
-            || { echo "::error::latest/download/appcast.xml 不可用（HTTP $latest_code）。" >&2; exit 1; }
+            || { echo "::error::latest/download/appcast.xml 不可用（HTTP ${latest_code}）。" >&2; exit 1; }
 
-          echo "::notice::发布验证通过：$TAG（版本 $VERSION，构建号 $BUILD_NUMBER）。"
+          echo "::notice::发布验证通过：${TAG}（版本 ${VERSION}，构建号 ${BUILD_NUMBER}）。"

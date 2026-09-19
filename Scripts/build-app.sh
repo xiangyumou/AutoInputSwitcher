@@ -272,4 +272,4 @@ sign_path "$APP_PATH"
 
 codesign --verify --deep --strict "$APP_PATH" || fail "签名校验失败"
 
-echo "已构建 $APP_PATH（版本 $VERSION，构建号 $BUILD_NUMBER）"
+echo "已构建 ${APP_PATH}（版本 ${VERSION}，构建号 ${BUILD_NUMBER}）"

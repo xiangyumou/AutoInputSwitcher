@@ -100,5 +100,5 @@ MANIFEST_EOF
 
 echo "已打包 $ZIP_PATH"
 echo "已打包 $DMG_PATH"
-echo "版本 $VERSION（构建号 $BUILD_NUMBER，tag $TAG）"
+echo "版本 ${VERSION}（构建号 ${BUILD_NUMBER}，tag ${TAG}）"
 
