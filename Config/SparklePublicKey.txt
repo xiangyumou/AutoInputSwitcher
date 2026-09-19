@@ -3,6 +3,6 @@
 # 一次性生成方法见 Scripts/setup-sparkle-keys.sh，以及 README 的“自动更新与签名”一节。
 # 私钥保存在 GitHub Actions secret SPARKLE_PRIVATE_KEY 中，并在离线介质另外备份。
 #
-# 在把下面这一行替换成真实公钥之前，Scripts/build-app.sh 会拒绝打包：
-# 缺少公钥的安装包无法验证更新，发布出去只会让用户卡在无法更新的版本上。
-REPLACE_WITH_SPARKLE_ED25519_PUBLIC_KEY
+# 公钥可以公开、可以提交。私钥只保存在 GitHub Actions secret SPARKLE_PRIVATE_KEY 中，
+# 并已在离线介质另行备份；Scripts/build-app.sh 会在公钥缺失或仍是占位符时拒绝打包。
+Zsxi/uz/1095F9/i4D/Y+1Eqc33fB99NHJZXvH2BbJE=
