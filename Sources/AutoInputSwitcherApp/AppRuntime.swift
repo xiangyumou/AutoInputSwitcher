@@ -5,6 +5,10 @@ import Foundation
 @MainActor
 final class AppRuntime: ObservableObject {
     static let showMenuBarIconKey = "showMenuBarIcon"
+    static let voiceRestoreEnabledKey = "voiceRestoreEnabled"
+    static let voiceInputSourceIDKey = "voiceInputSourceID"
+    /// Picker value for "detect the voice input source automatically".
+    static let automaticVoiceInputSourceID = ""
 
     static var noSwitchInputSourceID: String {
         RuleSet.noSwitchInputSourceID
@@ -34,11 +38,34 @@ final class AppRuntime: ObservableObject {
             defaults.set(showMenuBarIcon, forKey: Self.showMenuBarIconKey)
         }
     }
+    @Published var voiceRestoreEnabled: Bool {
+        didSet {
+            guard voiceRestoreEnabled != oldValue else { return }
+            defaults.set(voiceRestoreEnabled, forKey: Self.voiceRestoreEnabledKey)
+            reconfigureVoiceRestore()
+        }
+    }
+    /// The chosen voice input source, or automaticVoiceInputSourceID.
+    @Published var voiceInputSourceSelection: String {
+        didSet {
+            guard voiceInputSourceSelection != oldValue else { return }
+            if voiceInputSourceSelection == Self.automaticVoiceInputSourceID {
+                defaults.removeObject(forKey: Self.voiceInputSourceIDKey)
+            } else {
+                defaults.set(voiceInputSourceSelection, forKey: Self.voiceInputSourceIDKey)
+            }
+            reconfigureVoiceRestore()
+        }
+    }
 
     private let store: any RuleStore
     private let inputSourceManager: any InputSourceManaging
     private let applicationScanner: any ApplicationScanning
     private let loginItemManager: any LoginItemManaging
+    private let microphoneMonitor: any MicrophoneActivityMonitoring
+    private let overlayDetector: any VoiceOverlayDetecting
+    private let voiceSettleDelay: TimeInterval
+    private let voiceOverlayTimeout: TimeInterval
     private let switchCounter: SwitchCounter
     private let defaults: UserDefaults
     private let ownBundleIdentifier: String?
@@ -49,11 +76,20 @@ final class AppRuntime: ObservableObject {
     private var hasStarted = false
     private var hasStopped = false
 
+    private var voiceMonitoringActive = false
+    private var voiceRestorer: VoiceInputRestorer?
+    private var voiceBundleIdentifier: String?
+    private var voiceDeadlineTask: Task<Void, Never>?
+
     init(
         store: any RuleStore = JSONRuleStore.applicationSupportStore(),
         inputSourceManager: any InputSourceManaging = SystemInputSourceManager(),
         applicationScanner: any ApplicationScanning = InstalledApplicationScanner(),
         loginItemManager: any LoginItemManaging = SystemLoginItemManager(),
+        microphoneMonitor: any MicrophoneActivityMonitoring = SystemMicrophoneMonitor(),
+        overlayDetector: any VoiceOverlayDetecting = SystemVoiceOverlayDetector(),
+        voiceSettleDelay: TimeInterval = 0.3,
+        voiceOverlayTimeout: TimeInterval = 8,
         switchCounter: SwitchCounter = SwitchCounter(),
         defaults: UserDefaults = .standard,
         updateController: UpdateController? = nil,
@@ -63,11 +99,18 @@ final class AppRuntime: ObservableObject {
         self.inputSourceManager = inputSourceManager
         self.applicationScanner = applicationScanner
         self.loginItemManager = loginItemManager
+        self.microphoneMonitor = microphoneMonitor
+        self.overlayDetector = overlayDetector
+        self.voiceSettleDelay = voiceSettleDelay
+        self.voiceOverlayTimeout = voiceOverlayTimeout
         self.switchCounter = switchCounter
         self.defaults = defaults
         self.updateController = updateController
         self.ownBundleIdentifier = ownBundleIdentifier
         self.showMenuBarIcon = defaults.object(forKey: Self.showMenuBarIconKey) as? Bool ?? true
+        self.voiceRestoreEnabled = defaults.object(forKey: Self.voiceRestoreEnabledKey) as? Bool ?? true
+        self.voiceInputSourceSelection = defaults.string(forKey: Self.voiceInputSourceIDKey)
+            ?? Self.automaticVoiceInputSourceID
         self.switchCount = switchCounter.count
         self.launchAtLoginStatus = loginItemManager.status
     }
@@ -101,6 +144,7 @@ final class AppRuntime: ObservableObject {
         }
 
         inputSourceManager.stopMonitoringEnabledSources()
+        stopVoiceRestore()
         updateController?.stop()
     }
 
@@ -266,6 +310,7 @@ final class AppRuntime: ObservableObject {
         inputSourceManager.invalidateCache()
         inputSources = inputSourceManager.availableInputSources()
         currentInputSource = inputSourceManager.currentInputSource()
+        reconfigureVoiceRestore()
     }
 
     func selectedInputSourceID(for application: InstalledApplication) -> String {
@@ -483,6 +528,8 @@ final class AppRuntime: ObservableObject {
         inputSourceManager.startMonitoringEnabledSources { [weak self] in
             self?.refreshInputSources()
         }
+
+        startVoiceRestore()
     }
 
     private func updateCurrentApplication(from app: NSRunningApplication?) {
@@ -528,5 +575,182 @@ final class AppRuntime: ObservableObject {
         }
 
         currentInputSource = inputSourceManager.currentInputSource()
+    }
+
+    // MARK: - Voice input restore
+
+    /// The voice input source in effect: the saved choice, otherwise the first
+    /// input source that looks like Doubao.
+    var effectiveVoiceInputSource: InputSource? {
+        if voiceInputSourceSelection != Self.automaticVoiceInputSourceID {
+            return inputSources.first { $0.id == voiceInputSourceSelection }
+        }
+        return detectedVoiceInputSource
+    }
+
+    var detectedVoiceInputSource: InputSource? {
+        inputSources.first {
+            VoiceInputRestorer.isLikelyVoiceInputSource(id: $0.id, name: $0.name)
+        }
+    }
+
+    /// Picker entries for the voice input source, keeping a saved choice that is
+    /// no longer installed visible.
+    var voiceInputSourceChoices: [InputSourceChoice] {
+        var choices = inputSources.map { InputSourceChoice(id: $0.id, name: $0.name) }
+        if
+            voiceInputSourceSelection != Self.automaticVoiceInputSourceID,
+            !choices.contains(where: { $0.id == voiceInputSourceSelection })
+        {
+            choices.append(
+                InputSourceChoice(
+                    id: voiceInputSourceSelection,
+                    name: "不可用：" + voiceInputSourceSelection
+                )
+            )
+        }
+        return choices
+    }
+
+    func startVoiceRestore() {
+        guard !voiceMonitoringActive else { return }
+        voiceMonitoringActive = true
+
+        inputSourceManager.startMonitoringSelectedSource { [weak self] in
+            self?.handleSelectedInputSourceChanged()
+        }
+        reconfigureVoiceRestore()
+    }
+
+    func stopVoiceRestore() {
+        voiceMonitoringActive = false
+        inputSourceManager.stopMonitoringSelectedSource()
+        tearDownVoiceSession()
+    }
+
+    /// Rebuilds the state machine when the feature, the chosen input source or the
+    /// list of input sources changes. An unchanged configuration keeps a session
+    /// that is in progress.
+    private func reconfigureVoiceRestore() {
+        guard
+            voiceMonitoringActive,
+            voiceRestoreEnabled,
+            let voiceSource = effectiveVoiceInputSource
+        else {
+            tearDownVoiceSession()
+            return
+        }
+
+        let configuration = VoiceInputRestorer.Configuration(
+            voiceSourceID: voiceSource.id,
+            settleDelay: voiceSettleDelay,
+            overlayTimeout: voiceOverlayTimeout
+        )
+        guard voiceRestorer?.configuration != configuration else { return }
+
+        tearDownVoiceSession()
+        voiceBundleIdentifier = inputSourceManager.bundleIdentifier(forSourceID: voiceSource.id)
+        voiceRestorer = VoiceInputRestorer(
+            configuration: configuration,
+            currentSourceID: normalizedVoiceSourceID(inputSourceManager.currentInputSource()?.id)
+        )
+        VoiceLog.logger.info(
+            "voice restore enabled for \(voiceSource.id, privacy: .public) bundle=\(self.voiceBundleIdentifier ?? "-", privacy: .public)"
+        )
+
+        microphoneMonitor.start { [weak self] running in
+            self?.handleVoiceEvent(.microphone(running: running))
+        }
+    }
+
+    private func tearDownVoiceSession() {
+        microphoneMonitor.stop()
+        overlayDetector.stop()
+        voiceDeadlineTask?.cancel()
+        voiceDeadlineTask = nil
+        voiceRestorer = nil
+        voiceBundleIdentifier = nil
+    }
+
+    private func handleSelectedInputSourceChanged() {
+        currentInputSource = inputSourceManager.currentInputSource()
+        handleVoiceEvent(.sourceChanged(id: normalizedVoiceSourceID(currentInputSource?.id)))
+    }
+
+    /// Input modes of the voice input method (for example its pinyin mode) count
+    /// as the voice input source itself.
+    private func normalizedVoiceSourceID(_ id: String?) -> String? {
+        guard
+            let id,
+            let voiceSourceID = effectiveVoiceInputSource?.id,
+            id != voiceSourceID,
+            let voiceBundleIdentifier
+        else {
+            return id
+        }
+
+        return inputSourceManager.bundleIdentifier(forSourceID: id) == voiceBundleIdentifier
+            ? voiceSourceID
+            : id
+    }
+
+    private func handleVoiceEvent(_ event: VoiceInputRestorer.Event) {
+        guard var restorer = voiceRestorer else { return }
+
+        let before = restorer.phase
+        let actions = restorer.handle(event, now: Date())
+        voiceRestorer = restorer
+
+        if restorer.phase != before || !actions.isEmpty {
+            VoiceLog.logger.info(
+                "\(String(describing: event), privacy: .public): \(String(describing: before), privacy: .public) -> \(String(describing: restorer.phase), privacy: .public) actions=\(String(describing: actions), privacy: .public)"
+            )
+        }
+
+        for action in actions {
+            perform(action)
+        }
+    }
+
+    private func perform(_ action: VoiceInputRestorer.Action) {
+        switch action {
+        case .restore(let sourceID):
+            if inputSourceManager.selectInputSource(id: sourceID) {
+                switchCounter.recordSwitch()
+                switchCount = switchCounter.count
+            } else {
+                VoiceLog.logger.error("restore to \(sourceID, privacy: .public) failed")
+            }
+            currentInputSource = inputSourceManager.currentInputSource()
+
+        case .scheduleDeadline(let date):
+            voiceDeadlineTask?.cancel()
+            voiceDeadlineTask = Task { [weak self] in
+                let delay = max(0, date.timeIntervalSinceNow)
+                do {
+                    try await Task.sleep(for: .seconds(delay))
+                } catch {
+                    return
+                }
+                guard let self, !Task.isCancelled else { return }
+                self.voiceDeadlineTask = nil
+                self.handleVoiceEvent(.deadlineReached)
+            }
+
+        case .cancelDeadline:
+            voiceDeadlineTask?.cancel()
+            voiceDeadlineTask = nil
+
+        case .captureOverlayBaseline:
+            overlayDetector.captureBaseline(bundleIdentifier: voiceBundleIdentifier)
+
+        case .startOverlayWatch:
+            overlayDetector.start(bundleIdentifier: voiceBundleIdentifier) { [weak self] visible in
+                self?.handleVoiceEvent(.overlay(visible: visible))
+            }
+
+        case .stopOverlayWatch:
+            overlayDetector.stop()
+        }
     }
 }

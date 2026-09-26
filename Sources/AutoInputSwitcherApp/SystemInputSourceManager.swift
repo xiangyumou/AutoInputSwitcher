@@ -9,12 +9,19 @@ final class SystemInputSourceManager: NSObject, InputSourceManaging {
         "AppleEnabledInputSourcesChangedNotification"
     )
 
+    /// Same value as kTISNotifySelectedKeyboardInputSourceChanged.
+    private static let selectedInputSourceChanged = Notification.Name(
+        "com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged"
+    )
+
     /// Safety net for changes that never arrive as a distributed notification.
     private static let cacheLifetime: TimeInterval = 3
 
     private var cachedInputSources: [InputSource]?
     private var cacheDate: Date?
     private var changeHandler: (@MainActor () -> Void)?
+    private var selectionHandler: (@MainActor () -> Void)?
+    private var selectionObserver: NSObjectProtocol?
 
     func availableInputSources() -> [InputSource] {
         if
@@ -65,6 +72,38 @@ final class SystemInputSourceManager: NSObject, InputSourceManaging {
             center.removeObserver(observer)
         }
         observers.removeAll()
+    }
+
+    func startMonitoringSelectedSource(_ handler: @escaping @MainActor () -> Void) {
+        selectionHandler = handler
+
+        guard selectionObserver == nil else { return }
+
+        selectionObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Self.selectedInputSourceChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.selectionHandler?()
+            }
+        }
+    }
+
+    func stopMonitoringSelectedSource() {
+        selectionHandler = nil
+        if let selectionObserver {
+            DistributedNotificationCenter.default().removeObserver(selectionObserver)
+            self.selectionObserver = nil
+        }
+    }
+
+    func bundleIdentifier(forSourceID id: String) -> String? {
+        guard let source = inputSource(matching: id) else {
+            return nil
+        }
+
+        return stringProperty(source, kTISPropertyBundleID)
     }
 
     private func handleEnabledInputSourcesChanged() {

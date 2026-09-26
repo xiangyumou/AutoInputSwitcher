@@ -10,6 +10,7 @@ struct MainWindowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             topBar
+            voiceBar
             filterBar
             applicationsContent
         }
@@ -91,6 +92,52 @@ struct MainWindowView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         }
+    }
+
+    private var voiceBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "mic")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            Toggle("语音输入后切回原输入法", isOn: $runtime.voiceRestoreEnabled)
+                .toggleStyle(.switch)
+                .accessibilityLabel("语音输入后切回原输入法")
+
+            Picker("语音输入法", selection: $runtime.voiceInputSourceSelection) {
+                Text(automaticVoiceChoiceTitle).tag(AppRuntime.automaticVoiceInputSourceID)
+                ForEach(runtime.voiceInputSourceChoices) { choice in
+                    Text(choice.name).tag(choice.id)
+                }
+            }
+            .frame(width: 300)
+            .disabled(!runtime.voiceRestoreEnabled)
+            .accessibilityLabel("语音输入法")
+
+            if runtime.voiceRestoreEnabled && runtime.effectiveVoiceInputSource == nil {
+                Text("未找到豆包输入法，请在系统设置中添加，或手动选择语音输入法。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        }
+    }
+
+    private var automaticVoiceChoiceTitle: String {
+        if let detected = runtime.detectedVoiceInputSource {
+            return "自动识别（" + detected.name + "）"
+        }
+        return "自动识别（未找到）"
     }
 
     private var filterBar: some View {
